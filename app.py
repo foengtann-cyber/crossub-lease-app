@@ -1,51 +1,63 @@
 import streamlit as st
+import pandas as pd
 from docx import Document
 import io
 
-st.set_page_config(page_title="Crossub Leasing Helper", layout="centered")
+st.set_page_config(page_title="Crossub Auto-Fill Tool", layout="wide")
 
-st.title("📜 Lease Amendment Tool")
-st.info("Copy the details from your Crossub screen into the boxes below.")
+st.title("⚡ Crossub Smart Lease Tool")
 
-# --- FORM SECTION ---
-st.subheader("1. Property & Rent")
+# --- STEP 1: UPLOAD DATA FROM CROSSUB ---
+st.sidebar.header("1. Sync System Data")
+uploaded_csv = st.sidebar.file_uploader("Upload CSV/Excel from Crossub", type=["csv", "xlsx"])
+
+# Variables to hold auto-filled data
+auto_addr = ""
+auto_rent = 0.0
+auto_tenant = ""
+
+if uploaded_csv:
+    # Read the file exported from your system
+    df = pd.read_csv(uploaded_csv) if uploaded_csv.name.endswith('.csv') else pd.read_excel(uploaded_csv)
+    
+    st.sidebar.success("System Data Linked!")
+    # Let you pick the property from the system list
+    selected_prop = st.sidebar.selectbox("Choose Property", df.iloc[:, 0].tolist())
+    
+    # Auto-find the data in the table
+    row = df[df.iloc[:, 0] == selected_prop].iloc[0]
+    auto_addr = selected_prop
+    # Adjust 'Rent' and 'Tenant' below to match your Excel column names
+    auto_rent = float(row.get('Rent', 0.0)) 
+    auto_tenant = row.get('Tenant', "")
+
+# --- STEP 2: THE FORM (Auto-filled) ---
+st.subheader("2. Confirm Details")
 col1, col2 = st.columns(2)
+
 with col1:
-    addr = st.text_input("Property Address", placeholder="e.g. U1102, 66 Berry St")
-    rent = st.number_input("Rent Amount ($)", min_value=0.0, step=10.0)
+    addr = st.text_input("Property Address", value=auto_addr)
+    rent = st.number_input("Weekly Rent ($)", value=auto_rent)
+    l_name = st.text_input("Landlord Name") # If this is in your CSV, we can auto-fill it too
+
 with col2:
-    freq = st.selectbox("Frequency", ["per Week", "per Month"])
+    tenants = st.text_area("Tenant(s)", value=auto_tenant)
     start_date = st.date_input("Lease Start Date")
+    term = st.text_input("Term", value="52 weeks")
 
+# --- STEP 3: GENERATE ---
 st.divider()
-
-# --- LANDLORD SECTION ---
-st.subheader("2. Landlord Information")
-l_name = st.text_input("Landlord Full Name")
-l_contact = st.text_input("Landlord Phone/Email")
-
-# --- TENANT SECTION ---
-st.subheader("3. Tenant Information")
-tenants = st.text_area("Tenant Names (one per line)")
-term = st.text_input("Lease Term", value="52 weeks")
-
-st.divider()
-
-# --- GENERATION SECTION ---
-st.subheader("4. Generate Document")
 template = st.file_uploader("Upload Word Template (.docx)", type="docx")
 
-if st.button("🚀 Create Completed Lease"):
+if st.button("🚀 Generate Agreement"):
     if template and addr:
         doc = Document(template)
-        
-        # Updated replacements including Landlord data
+        # Replacing tags like {{ADDRESS}}, {{RENT}}, {{TENANTS}}, {{LANDLORD_NAME}}
         replacements = {
             "{{ADDRESS}}": addr,
             "{{TENANTS}}": tenants,
             "{{LANDLORD_NAME}}": l_name,
-            "{{LANDLORD_CONTACT}}": l_contact,
-            "{{RENT}}": f"${rent:,.2f} {freq}",
+            "{{RENT}}": f"${rent:,.2f}",
             "{{START_DATE}}": start_date.strftime("%d/%m/%Y"),
             "{{TERM}}": term
         }
@@ -58,7 +70,4 @@ if st.button("🚀 Create Completed Lease"):
         bio = io.BytesIO()
         doc.save(bio)
         bio.seek(0)
-        st.success("Done! Your agreement is ready.")
-        st.download_button("⬇️ Download Now", data=bio, file_name=f"Lease_{addr[:10]}.docx")
-    else:
-        st.error("Please provide the Address and the Template file.")
+        st.download_button("⬇️ Download Completed Agreement", data=bio, file_name=f"Lease_{addr[:10]}.docx")
