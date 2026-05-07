@@ -1,65 +1,62 @@
 import streamlit as st
-import pandas as pd
+import easyocr
+from PIL import Image
+import numpy as np
 from docx import Document
 import io
+import re
 
-st.set_page_config(page_title="Crossub Auto-Fill Tool", layout="wide")
+st.set_page_config(page_title="Crossub OCR Tool", layout="centered")
+st.title("📸 Screenshot to Lease Tool")
+st.info("Upload a screenshot of the Crossub Property Details page.")
 
-st.title("⚡ Crossub Smart Lease Tool")
+# --- STEP 1: UPLOAD & READ SCREENSHOT ---
+uploaded_img = st.file_uploader("Upload Crossub Screenshot", type=["png", "jpg", "jpeg"])
 
-# --- STEP 1: UPLOAD DATA FROM CROSSUB ---
-st.sidebar.header("1. Sync System Data")
-uploaded_csv = st.sidebar.file_uploader("Upload CSV/Excel from Crossub", type=["csv", "xlsx"])
+extracted_data = {"Address": "", "Landlord": "", "Tenant": "", "Rent": 0.0}
 
-# Variables to hold auto-filled data
-auto_addr = ""
-auto_rent = 0.0
-auto_tenant = ""
+if uploaded_img:
+    with st.spinner("Reading screenshot..."):
+        reader = easyocr.Reader(['en'])
+        image = Image.open(uploaded_img)
+        result = reader.readtext(np.array(image), detail=0)
+        full_text = " ".join(result)
 
-if uploaded_csv:
-    # Read the file exported from your system
-    df = pd.read_csv(uploaded_csv) if uploaded_csv.name.endswith('.csv') else pd.read_excel(uploaded_csv)
-    
-    st.sidebar.success("System Data Linked!")
-    # Let you pick the property from the system list
-    selected_prop = st.sidebar.selectbox("Choose Property", df.iloc[:, 0].tolist())
-    
-    # Auto-find the data in the table
-    row = df[df.iloc[:, 0] == selected_prop].iloc[0]
-    auto_addr = selected_prop
-    # Adjust 'Rent' and 'Tenant' below to match your Excel column names
-    auto_rent = float(row.get('Rent', 0.0)) 
-    auto_tenant = row.get('Tenant', "")
+        # Basic logic to find data in the text (Customized for your system)
+        # These regex patterns look for numbers near words like 'Rent'
+        rent_match = re.search(r'Rent\s*\$?\s*(\d+)', full_text, re.IGNORECASE)
+        if rent_match:
+            extracted_data["Rent"] = float(rent_match.group(1))
 
-# --- STEP 2: THE FORM (Auto-filled) ---
-st.subheader("2. Confirm Details")
-col1, col2 = st.columns(2)
+        # Search for address patterns (e.g., Berry St, Wills Road)
+        addr_match = re.search(r'(\d+\s+[\w\s]+(?:Road|Street|St|Rd|Ave))', full_text, re.IGNORECASE)
+        if addr_match:
+            extracted_data["Address"] = addr_match.group(1)
 
-with col1:
-    addr = st.text_input("Property Address", value=auto_addr)
-    rent = st.number_input("Weekly Rent ($)", value=auto_rent)
-    l_name = st.text_input("Landlord Name") # If this is in your CSV, we can auto-fill it too
+        st.success("Data Extracted! Please verify below.")
 
-with col2:
-    tenants = st.text_area("Tenant(s)", value=auto_tenant)
-    start_date = st.date_input("Lease Start Date")
-    term = st.text_input("Term", value="52 weeks")
+# --- STEP 2: VERIFY & AMEND ---
+st.subheader("Confirm Details")
+addr = st.text_input("Property Address", value=extracted_data["Address"])
+l_name = st.text_input("Landlord Name") # Can be pulled if 'Landlord' is clear in image
+t_name = st.text_area("Tenant Name(s)", value=extracted_data["Tenant"])
+rent = st.number_input("Weekly Rent ($)", value=extracted_data["Rent"])
+start_date = st.date_input("Lease Start Date")
+
+st.divider()
 
 # --- STEP 3: GENERATE ---
-st.divider()
 template = st.file_uploader("Upload Word Template (.docx)", type="docx")
 
 if st.button("🚀 Generate Agreement"):
     if template and addr:
         doc = Document(template)
-        # Replacing tags like {{ADDRESS}}, {{RENT}}, {{TENANTS}}, {{LANDLORD_NAME}}
         replacements = {
             "{{ADDRESS}}": addr,
-            "{{TENANTS}}": tenants,
-            "{{LANDLORD_NAME}}": l_name,
+            "{{TENANT}}": t_name,
+            "{{LANDLORD}}": l_name,
             "{{RENT}}": f"${rent:,.2f}",
-            "{{START_DATE}}": start_date.strftime("%d/%m/%Y"),
-            "{{TERM}}": term
+            "{{DATE}}": start_date.strftime("%d/%m/%Y")
         }
         
         for p in doc.paragraphs:
